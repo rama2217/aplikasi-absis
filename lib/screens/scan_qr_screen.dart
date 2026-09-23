@@ -156,8 +156,6 @@ class _ScanQrScreenState extends State<ScanQrScreen> {
                     setState(() => _torchOn = !_torchOn);
                   },
                 ),
-                const SizedBox(width: 40),
-                _circleButton(icon: Icons.image_outlined, label: Strings.t('gallery'), onTap: () {}),
               ],
             ),
           ),

@@ -216,25 +216,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 const SizedBox(height: 12),
 
-                // Lupa kata sandi
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () {
-                      // TODO: implementasi reset password
-                    },
-                    child: Text(
-                      Strings.t('forgot_password'),
-                      style: const TextStyle(
-                        color: primaryColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
                 // Tombol Masuk
                 ElevatedButton(
                   onPressed: _isLoading ? null : _handleLogin,
