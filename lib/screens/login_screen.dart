@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../languages/app_language.dart';
 import '../languages/strings.dart';
@@ -52,6 +53,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       await _authService.loginWithNisn(nisn, password);
+
+      // Jadwalkan notifikasi push (sesi dibuka / akan ditutup) begitu
+      // login berhasil, supaya tidak bergantung siswa buka tab Profile
+      // dulu. init() minta izin notifikasi/exact-alarm (aman dipanggil
+      // berkali-kali, langsung return kalau sudah pernah diinit).
+      // Sengaja tidak di-await pakai try/catch terpisah -- kalau gagal
+      // (mis. user tolak izin notifikasi), jangan sampai memblokir login.
+      try {
+        await NotificationService.instance.init();
+        await NotificationService.instance.syncSessionNotifications();
+      } catch (_) {
+        // Gagal jadwalkan notifikasi bukan alasan untuk gagalkan login.
+      }
 
       if (!mounted) return;
       Navigator.pushReplacement(

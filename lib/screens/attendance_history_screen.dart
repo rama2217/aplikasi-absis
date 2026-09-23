@@ -107,6 +107,80 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
   int get _telatCount => _history.where((h) => h['status'] == 'telat').length;
   int get _alpaCount => _history.where((h) => h['status'] == 'alpa').length;
 
+  // Setiap pengajuan izin/sakit multi-hari disimpan sebagai beberapa row
+  // (1 row per tanggal) oleh LeaveRequestService, karena schema-nya
+  // unique(student_id, leave_date). Baris-baris itu di-insert dalam satu
+  // batch, jadi `created_at`-nya identik — dipakai di sini sebagai kunci
+  // untuk mengelompokkan mereka kembali jadi satu card di UI.
+  List<Map<String, dynamic>> get _groupedLeaveHistory {
+    final Map<String, List<Map<String, dynamic>>> groups = {};
+    for (final row in _leaveHistory) {
+      final key = '${row['created_at']}|${row['type']}|${row['reason']}';
+      groups.putIfAbsent(key, () => []).add(row);
+    }
+
+    final grouped = groups.values.map((rows) {
+      final dates = rows.map((r) => r['leave_date'] as String).toList()..sort();
+      return {
+        'type': rows.first['type'],
+        'reason': rows.first['reason'],
+        'created_at': rows.first['created_at'],
+        'dates': dates,
+        'statuses': rows.map((r) => r['status'] as String? ?? 'pending').toList(),
+      };
+    }).toList();
+
+    grouped.sort((a, b) =>
+        (b['created_at'] as String? ?? '').compareTo(a['created_at'] as String? ?? ''));
+    return grouped;
+  }
+
+  String _formatLeaveDateRange(List<String> dates) {
+    if (dates.isEmpty) return '-';
+    if (dates.length == 1) {
+      return DateFormat('EEEE, dd MMM yyyy', 'id_ID').format(DateTime.parse(dates.first));
+    }
+    final start = DateTime.parse(dates.first);
+    final end = DateTime.parse(dates.last);
+    final startStr = DateFormat('dd MMM', 'id_ID').format(start);
+    final endStr = DateFormat('dd MMM yyyy', 'id_ID').format(end);
+    return '$startStr – $endStr';
+  }
+
+  // Kalau semua tanggal dalam satu pengajuan punya status sama, tampilkan
+  // badge status seperti biasa. Kalau campuran (misal 1 hari disetujui,
+  // 1 hari masih menunggu karena di-approve per-hari oleh wali kelas),
+  // tampilkan ringkasan jumlah per status alih-alih memilih salah satu.
+  ({Color color, String label}) _summarizeLeaveStatus(List<String> statuses) {
+    final unique = statuses.toSet();
+    if (unique.length == 1) {
+      switch (unique.first) {
+        case 'approved':
+          return (color: hadirColor, label: Strings.t('leave_status_approved'));
+        case 'rejected':
+          return (color: alpaColor, label: Strings.t('leave_status_rejected'));
+        default:
+          return (color: telatColor, label: Strings.t('leave_status_pending'));
+      }
+    }
+
+    final counts = <String, int>{};
+    for (final s in statuses) {
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+    final parts = <String>[];
+    if (counts['approved'] != null) {
+      parts.add('${counts['approved']} ${Strings.t('leave_status_approved')}');
+    }
+    if (counts['pending'] != null) {
+      parts.add('${counts['pending']} ${Strings.t('leave_status_pending')}');
+    }
+    if (counts['rejected'] != null) {
+      parts.add('${counts['rejected']} ${Strings.t('leave_status_rejected')}');
+    }
+    return (color: telatColor, label: parts.join(' · '));
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -155,12 +229,15 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
                           )
                         : RefreshIndicator(
                             onRefresh: _loadLeaveHistory,
-                            child: ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                              itemCount: _leaveHistory.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 12),
-                              itemBuilder: (context, index) => _buildLeaveHistoryItem(_leaveHistory[index]),
-                            ),
+                            child: Builder(builder: (context) {
+                              final grouped = _groupedLeaveHistory;
+                              return ListView.separated(
+                                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                                itemCount: grouped.length,
+                                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                itemBuilder: (context, index) => _buildLeaveHistoryItem(grouped[index]),
+                              );
+                            }),
                           ),
               ),
           ],
@@ -357,7 +434,7 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
         ? DateFormat('d MMMM yyyy').format(DateTime.parse(sessionDate))
         : '-';
     final timeFormatted =
-        scannedAt != null ? DateFormat('hh:mm a').format(DateTime.parse(scannedAt).toLocal()) : '--:--';
+    scannedAt != null ? DateFormat('HH:mm').format(DateTime.parse(scannedAt).toLocal()) : '--:--';
 
     Color statusColor;
     String badgeText;
@@ -435,31 +512,18 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
     );
   }
 
-  Widget _buildLeaveHistoryItem(Map<String, dynamic> item) {
-    final leaveDate = item['leave_date'];
-    final type = item['type'] as String? ?? 'izin'; // 'sakit' atau 'izin'
-    final status = item['status'] as String? ?? 'pending';
-    final reason = item['reason'] as String? ?? '-';
+  Widget _buildLeaveHistoryItem(Map<String, dynamic> group) {
+    final dates = List<String>.from(group['dates'] as List);
+    final type = group['type'] as String? ?? 'izin'; // 'sakit' atau 'izin'
+    final statuses = List<String>.from(group['statuses'] as List);
+    final reason = group['reason'] as String? ?? '-';
 
-    final dateFormatted =
-        leaveDate != null ? DateFormat('EEEE, dd MMM yyyy', 'id_ID').format(DateTime.parse(leaveDate)) : '-';
+    final dateFormatted = _formatLeaveDateRange(dates);
     final typeLabel = type == 'sakit' ? Strings.t('sick') : Strings.t('permission');
 
-    Color statusColor;
-    String badgeText;
-    switch (status) {
-      case 'approved':
-        statusColor = hadirColor;
-        badgeText = Strings.t('leave_status_approved');
-        break;
-      case 'rejected':
-        statusColor = alpaColor;
-        badgeText = Strings.t('leave_status_rejected');
-        break;
-      default:
-        statusColor = telatColor;
-        badgeText = Strings.t('leave_status_pending');
-    }
+    final summary = _summarizeLeaveStatus(statuses);
+    final statusColor = summary.color;
+    final badgeText = summary.label;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -499,14 +563,20 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(20),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 92),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(badgeText,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ),
-            child: Text(badgeText,
-                style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
           ),
         ],
       ),

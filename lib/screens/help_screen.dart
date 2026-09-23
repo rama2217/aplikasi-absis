@@ -1,14 +1,34 @@
 import 'package:flutter/material.dart';
 import '../languages/app_language.dart';
 import '../languages/strings.dart';
+import '../services/settings_service.dart';
 
-class HelpScreen extends StatelessWidget {
+class HelpScreen extends StatefulWidget {
   const HelpScreen({super.key});
 
+  @override
+  State<HelpScreen> createState() => _HelpScreenState();
+}
+
+class _HelpScreenState extends State<HelpScreen> {
   static const primaryColor = Color(0xFF3B5FE0);
   static const bgColor = Color(0xFFF4F5F9);
   static const textDark = Color(0xFF1B2033);
   static const textGray = Colors.grey;
+
+  Map<String, String> _settings = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final data = await SettingsService.fetchMobileSettings();
+    if (!mounted) return;
+    setState(() => _settings = data);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,21 +46,25 @@ class HelpScreen extends StatelessWidget {
           children: [
             _buildTopBar(context),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                children: [
-                  Text(Strings.t('help_faq_section').toUpperCase(),
-                      style: const TextStyle(
-                          fontSize: 11, fontWeight: FontWeight.w700, color: textGray, letterSpacing: 0.6)),
-                  const SizedBox(height: 10),
-                  _faqCard(),
-                  const SizedBox(height: 24),
-                  Text(Strings.t('help_contact_section').toUpperCase(),
-                      style: const TextStyle(
-                          fontSize: 11, fontWeight: FontWeight.w700, color: textGray, letterSpacing: 0.6)),
-                  const SizedBox(height: 10),
-                  _contactCard(),
-                ],
+              child: RefreshIndicator(
+                onRefresh: _loadSettings,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                  children: [
+                    Text(Strings.t('help_faq_section').toUpperCase(),
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w700, color: textGray, letterSpacing: 0.6)),
+                    const SizedBox(height: 10),
+                    _faqCard(),
+                    const SizedBox(height: 24),
+                    Text(Strings.t('help_contact_section').toUpperCase(),
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w700, color: textGray, letterSpacing: 0.6)),
+                    const SizedBox(height: 10),
+                    _contactCard(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -114,7 +138,23 @@ class HelpScreen extends StatelessWidget {
   }
 
   Widget _contactCard() {
+    final name = _settings[SettingsService.keyHelpAdminName] ?? '';
+    final contact = _settings[SettingsService.keyHelpAdminContact] ?? '';
+
+    // Di settings cuma ada satu field kontak (WA ATAU email), jadi ikon &
+    // label ditentukan dari isinya: ada '@' = email, selain itu telepon/WA.
+    final isEmail = contact.contains('@');
+    final icon = isEmail ? Icons.email_outlined : Icons.phone_outlined;
+    final label = isEmail
+        ? Strings.t('help_contact_email_label')
+        : Strings.t('help_contact_admin_label');
+
+    final value = contact.isEmpty
+        ? '-'
+        : (name.isEmpty ? contact : '$name\n$contact');
+
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -129,9 +169,7 @@ class HelpScreen extends StatelessWidget {
             style: const TextStyle(fontSize: 13, color: textGray, height: 1.4),
           ),
           const SizedBox(height: 16),
-          _contactRow(Icons.phone_outlined, Strings.t('help_contact_admin_label'), '(TODO: nomor WA/telepon admin)'),
-          const SizedBox(height: 12),
-          _contactRow(Icons.email_outlined, Strings.t('help_contact_email_label'), '(TODO: email tata usaha sekolah)'),
+          _contactRow(icon, label, value),
         ],
       ),
     );

@@ -38,6 +38,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _loadProfile();
+    // Sinkronkan ulang jadwal notifikasi push tiap kali tab Profile dibuka.
+    // Ini stopgap: idealnya dipanggil sekali setelah login berhasil (lihat
+    // login_screen.dart) supaya notifikasi ke-schedule dari awal tanpa
+    // siswa harus buka tab Profile dulu. Aman dipanggil berkali-kali --
+    // method ini cancelAll() lalu jadwal ulang dari data terbaru.
+    NotificationService.instance.syncSessionNotifications();
   }
 
   Future<void> _loadProfile() async {

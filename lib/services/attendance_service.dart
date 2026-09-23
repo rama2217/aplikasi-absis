@@ -68,6 +68,20 @@ class AttendanceService {
       throw QrValidationException('Sesi presensi tidak ditemukan');
     }
 
+    // WAJIB: pastikan siswa yang scan memang murid dari kelas pemilik sesi
+    // ini. Tanpa cek ini, siswa dari kelas manapun bisa submit presensi ke
+    // sesi kelas lain hanya dengan scan QR yang salah kiosk (disengaja atau
+    // tidak), karena token & expiry saja tidak membatasi kelas.
+    final student = await _client
+        .from('students')
+        .select('class_id')
+        .eq('id', studentId)
+        .maybeSingle();
+
+    if (student == null || student['class_id'] != session['class_id']) {
+      throw QrValidationException('QR ini bukan untuk kelasmu');
+    }
+
     if (session['is_active'] != true) {
       throw QrValidationException('Sesi presensi belum/sudah tidak aktif');
     }
@@ -136,6 +150,10 @@ class AttendanceService {
       'session_id': session['id'],
       'status': status,
       'photo_url': photoUrl,
+      // WAJIB diisi eksplisit -- kalau kolom ini NOT NULL tanpa default
+      // di database, insert bakal gagal total tanpa scanned_at ini.
+      // Dipakai juga oleh calculate_points() dan penentuan hadir/telat.
+      'scanned_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
 

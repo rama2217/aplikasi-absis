@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import '../services/auth_service.dart';
@@ -83,6 +84,8 @@ class _ConfirmPhotoScreenState extends State<ConfirmPhotoScreen> {
 
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
+      // ignore: avoid_print
+      print('SUBMIT ATTENDANCE ERROR: $e'); // TODO: hapus setelah selesai debug
       setState(() {
         _errorMessage = Strings.t('submit_attendance_failed');
         _isSubmitting = false;
@@ -124,7 +127,30 @@ class _ConfirmPhotoScreenState extends State<ConfirmPhotoScreen> {
                 child: _capturedPhoto != null
                     ? Image.file(File(_capturedPhoto!.path), fit: BoxFit.cover)
                     : (_cameraController != null && _cameraController!.value.isInitialized
-                        ? CameraPreview(_cameraController!)
+                        ? FittedBox(
+                            fit: BoxFit.cover,
+                            child: SizedBox(
+                              // Pakai ukuran asli sensor (dibalik, karena kamera
+                              // biasanya portrait tapi previewSize defaultnya
+                              // dilaporkan landscape) -- ini yang mencegah
+                              // gambar "cembung"/melar, beda dari cuma naruh
+                              // CameraPreview polos tanpa jaga aspect ratio.
+                              width: _cameraController!.value.previewSize!.height,
+                              height: _cameraController!.value.previewSize!.width,
+                              child: Transform(
+                                alignment: Alignment.center,
+                                // Mirror horizontal -- kamera depan secara
+                                // default TIDAK di-mirror oleh plugin camera
+                                // (preview kebalik kayak baca teks di kaca).
+                                // Ini cuma buat tampilan preview live, foto
+                                // yang benar-benar ke-capture tetap orientasi
+                                // asli (tidak ikut ke-mirror), supaya hasil
+                                // foto bukti tetap representasi asli wajah.
+                                transform: Matrix4.rotationY(math.pi),
+                                child: CameraPreview(_cameraController!),
+                              ),
+                            ),
+                          )
                         : const Center(child: CircularProgressIndicator())),
               ),
             ),

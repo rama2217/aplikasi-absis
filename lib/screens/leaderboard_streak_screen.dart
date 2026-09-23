@@ -29,6 +29,7 @@ class _StudentPoints {
   final String fullName;
   final String? className;
   final String? major;
+  final String? avatarUrl;
   final int totalPoints;
   final String? fastestScanTime;
 
@@ -37,6 +38,7 @@ class _StudentPoints {
     required this.fullName,
     required this.className,
     required this.major,
+    required this.avatarUrl,
     required this.totalPoints,
     required this.fastestScanTime,
   });
@@ -47,14 +49,15 @@ class _StudentPoints {
       fullName: map['full_name'] ?? '-',
       className: map['class_name'],
       major: map['major'],
+      avatarUrl: map['avatar_url'],
       totalPoints: (map['total_points'] as num?)?.toInt() ?? 0,
       fastestScanTime: map['fastest_scan_time'],
     );
   }
 }
 
-/// Mode filter leaderboard: per kelas (default), per jurusan, atau seluruh sekolah
-enum _LeaderboardScope { kelas, jurusan, sekolah }
+/// Mode filter leaderboard: per kelas, per jurusan, per angkatan, atau seluruh sekolah
+enum _LeaderboardScope { kelas, jurusan, angkatan, sekolah }
 
 class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
   // Design tokens — disamakan dengan palet Login/Beranda/History/Leave
@@ -79,9 +82,64 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
   Map<String, dynamic>? _myProfile; // untuk avatar_url & nisn di card identitas
   _LeaderboardScope _scope = _LeaderboardScope.kelas;
 
+  // Opsi dropdown untuk tiap tab (diambil dari tabel classes, sekali di awal)
+  List<Map<String, dynamic>> _classOptions = [];
+  List<String> _majorOptions = [];
+  static const List<String> _gradeOptions = ['X', 'XI', 'XII'];
+
+  // Pilihan spesifik user di tiap tab -- null berarti belum dipilih manual,
+  // jadi fallback ke kelas/jurusan/angkatan siswa sendiri.
+  String? _selectedClassId;
+  String? _selectedMajor;
+  String? _selectedGrade;
+
   @override
   void initState() {
     super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _loadFilterOptions();
+    await _loadLeaderboard();
+  }
+
+  /// Ambil daftar kelas & jurusan sekali di awal, untuk isi dropdown filter.
+  /// Angkatan (grade) pakai daftar tetap X/XI/XII, tidak perlu query.
+  Future<void> _loadFilterOptions() async {
+    try {
+      final rows = await _client.from('classes').select('id, name, major, grade').order('name');
+      final classes = List<Map<String, dynamic>>.from(rows);
+
+      final majors = classes
+          .map((c) => c['major'] as String?)
+          .where((m) => m != null && m.isNotEmpty)
+          .map((m) => m!)
+          .toSet()
+          .toList()
+        ..sort();
+
+      setState(() {
+        _classOptions = classes;
+        _majorOptions = majors;
+      });
+    } catch (e) {
+      // Kalau gagal, dropdown Kelas/Jurusan tetap kosong -- leaderboard
+      // masih bisa dipakai lewat fallback kelas/jurusan sendiri.
+    }
+  }
+
+  /// Cari grade (X/XI/XII) dari class_id, berdasarkan _classOptions yang
+  /// sudah dimuat lewat _loadFilterOptions().
+  String? _gradeOfClass(String? classId) {
+    if (classId == null) return null;
+    for (final c in _classOptions) {
+      if (c['id'].toString() == classId) return c['grade'] as String?;
+    }
+    return null;
+  }
+
+  void _onFilterValueChanged() {
     _loadLeaderboard();
   }
 
@@ -94,17 +152,28 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
       _myClassId = profile?['class_id']?.toString();
       _myMajor = profile?['major'] as String?;
 
+      // Default awal (sekali saja): kalau user belum pernah pilih manual
+      // di tab ini, pakai kelas/jurusan/angkatan siswa sendiri.
+      _selectedClassId ??= _myClassId;
+      _selectedMajor ??= _myMajor;
+      _selectedGrade ??= _gradeOfClass(_myClassId);
+
       var query = _client.from('v_leaderboard').select();
 
       switch (_scope) {
         case _LeaderboardScope.kelas:
-          if (_myClassId != null) {
-            query = query.eq('class_id', _myClassId!);
+          if (_selectedClassId != null) {
+            query = query.eq('class_id', _selectedClassId!);
           }
           break;
         case _LeaderboardScope.jurusan:
-          if (_myMajor != null) {
-            query = query.eq('major', _myMajor!);
+          if (_selectedMajor != null) {
+            query = query.eq('major', _selectedMajor!);
+          }
+          break;
+        case _LeaderboardScope.angkatan:
+          if (_selectedGrade != null) {
+            query = query.eq('grade', _selectedGrade!);
           }
           break;
         case _LeaderboardScope.sekolah:
@@ -162,7 +231,15 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
                     _buildTopBar(),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-                      child: _buildScopeSelector(),
+                      child: Column(
+                        children: [
+                          _buildScopeSelector(),
+                          if (_scope != _LeaderboardScope.sekolah) ...[
+                            const SizedBox(height: 10),
+                            _buildFilterDropdown(),
+                          ],
+                        ],
+                      ),
                     ),
                     if (hasHero) ...[
                       _buildHeroSection(myPoints, myRank + 1),
@@ -291,8 +368,77 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
       children: [
         chip(Strings.t('scope_class'), _LeaderboardScope.kelas),
         chip(Strings.t('scope_major'), _LeaderboardScope.jurusan),
+        chip(Strings.t('scope_batch'), _LeaderboardScope.angkatan),
         chip(Strings.t('scope_school'), _LeaderboardScope.sekolah),
       ],
+    );
+  }
+
+  // ---------- Dropdown pilihan spesifik (kelas mana / jurusan mana / angkatan mana) ----------
+  Widget _buildFilterDropdown() {
+    switch (_scope) {
+      case _LeaderboardScope.kelas:
+        return _dropdownBox<String>(
+          value: _selectedClassId,
+          hint: Strings.t('select_class_hint'),
+          items: _classOptions
+              .map((c) => DropdownMenuItem(value: c['id'].toString(), child: Text(c['name'] as String)))
+              .toList(),
+          onChanged: (val) {
+            setState(() => _selectedClassId = val);
+            _onFilterValueChanged();
+          },
+        );
+      case _LeaderboardScope.jurusan:
+        return _dropdownBox<String>(
+          value: _selectedMajor,
+          hint: Strings.t('select_major_hint'),
+          items: _majorOptions.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+          onChanged: (val) {
+            setState(() => _selectedMajor = val);
+            _onFilterValueChanged();
+          },
+        );
+      case _LeaderboardScope.angkatan:
+        return _dropdownBox<String>(
+          value: _selectedGrade,
+          hint: Strings.t('select_grade_hint'),
+          items: _gradeOptions.map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
+          onChanged: (val) {
+            setState(() => _selectedGrade = val);
+            _onFilterValueChanged();
+          },
+        );
+      case _LeaderboardScope.sekolah:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _dropdownBox<T>({
+    required T? value,
+    required String hint,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE3E7F0)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          hint: Text(hint, style: const TextStyle(fontSize: 13, color: textGray)),
+          isExpanded: true,
+          icon: const Icon(Icons.keyboard_arrow_down, color: textGray, size: 20),
+          style: const TextStyle(fontSize: 13, color: textDark, fontWeight: FontWeight.w600),
+          items: items,
+          onChanged: onChanged,
+        ),
+      ),
     );
   }
 
@@ -393,15 +539,20 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
     final ringColors = [silver, gold, bronze];
     final ranks = top3.length > 2 ? [2, 1, 3] : [2, 1];
 
-    return SizedBox(
-      height: 190,
-      child: Row(
+    // Tidak pakai SizedBox(height: tetap) di sini -- kolom peringkat 1 lebih
+    // tinggi dari 2 & 3 (ada trophy icon + avatar lebih besar + bar lebih
+    // tinggi), jadi tinggi total tiap kolom berbeda. Row dibiarkan
+    // menghitung tinggi alaminya sendiri (mengikuti kolom tertinggi),
+    // supaya tidak overflow dan supaya alignment .end tetap membuat semua
+    // bar duduk sejajar di baseline yang sama.
+    return Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: List.generate(ordered.length, (i) {
           final student = ordered[i];
           return Expanded(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 if (ranks[i] == 1)
@@ -415,11 +566,19 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
                   child: CircleAvatar(
                     radius: ranks[i] == 1 ? 26 : 20,
                     backgroundColor: Colors.white.withOpacity(0.9),
-                    child: Text(
-                      student.fullName.isNotEmpty ? student.fullName[0].toUpperCase() : '?',
-                      style: TextStyle(
-                          color: primaryColor, fontWeight: FontWeight.bold, fontSize: ranks[i] == 1 ? 18 : 14),
-                    ),
+                    // Pakai foto profil asli kalau ada, sama seperti di
+                    // _buildIdentityCard() -- sebelumnya podium selalu
+                    // nampilin inisial huruf walau siswa punya avatar_url.
+                    backgroundImage: (student.avatarUrl != null && student.avatarUrl!.isNotEmpty)
+                        ? NetworkImage(student.avatarUrl!)
+                        : null,
+                    child: (student.avatarUrl == null || student.avatarUrl!.isEmpty)
+                        ? Text(
+                            student.fullName.isNotEmpty ? student.fullName[0].toUpperCase() : '?',
+                            style: TextStyle(
+                                color: primaryColor, fontWeight: FontWeight.bold, fontSize: ranks[i] == 1 ? 18 : 14),
+                          )
+                        : null,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -447,8 +606,7 @@ class _LeaderboardStreakScreenState extends State<LeaderboardStreakScreen> {
             ),
           );
         }),
-      ),
-    );
+      );
   }
 
   // ---------- Baris ranking (list lengkap) ----------
